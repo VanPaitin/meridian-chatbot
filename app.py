@@ -68,6 +68,24 @@ def _conversation_input(
     return input_items
 
 
+def build_agent(server: MCPServerStreamableHttp) -> Agent:
+    return Agent(
+        name="Meridian Assistant",
+        instructions=(
+            "Use the MCP server tools to answer the user's question. "
+            "Prefer tool results over general knowledge. "
+            "If the question is not answerable by the tools, say you don't know "
+            "and avoid making up an answer. You can nudge the user to ask "
+            "questions that the tools can answer."
+        ),
+        model="gpt-4.1-mini",
+        mcp_servers=[server],
+        model_settings=ModelSettings(
+            tool_choice="required",
+        ),
+    )
+
+
 async def _stream_agent(
     user_message: str,
     history: list[dict[str, str] | list[str] | tuple[str, str]],
@@ -79,25 +97,13 @@ async def _stream_agent(
         cache_tools_list=True,
         max_retry_attempts=3,
     ) as server:
-        agent = Agent(
-            name="Meridian Assistant",
-            instructions=(
-                "Use the MCP server tools to answer the user's question. "
-                "Prefer tool results over general knowledge. "
-                "If the question is not answerable by the tools, say you don't know "
-                "and avoid making up an answer. You can nudge the user to ask "
-                "questions that the tools can answer."
-            ),
-            model="gpt-4.1-mini",
-            mcp_servers=[server],
-            model_settings=ModelSettings(
-                tool_choice="required",
-            ),
-        )
+        agent = build_agent(server)
+
         with trace(
             "Meridian MCP Chatbot",
             metadata={
                 "mcp_server_url": server_url,
+                "trace_id": trace_id,
                 "history_turns": str(len(history)),
                 "message_length": str(len(user_message)),
             },
