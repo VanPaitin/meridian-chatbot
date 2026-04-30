@@ -103,7 +103,6 @@ async def _stream_agent(
             "Meridian MCP Chatbot",
             metadata={
                 "mcp_server_url": server_url,
-                "trace_id": trace_id,
                 "history_turns": str(len(history)),
                 "message_length": str(len(user_message)),
             },

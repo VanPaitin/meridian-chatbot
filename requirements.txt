@@ -1,0 +1,4 @@
+gradio>=5.0
+mcp>=1.0
+openai-agents>=0.14.8
+python-dotenv>=1.2.2

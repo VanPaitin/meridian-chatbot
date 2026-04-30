@@ -1,3 +1,9 @@
+---
+title: meridian-chatbot
+app_file: app.py
+sdk: gradio
+sdk_version: 6.13.0
+---
 # Meridian Chatbot
 
 A small Gradio app that lets users chat with an OpenAI Agents SDK agent connected
