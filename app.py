@@ -1,5 +1,5 @@
-import asyncio
 import os
+from collections.abc import AsyncIterator
 
 import gradio as gr
 from agents import Agent, Runner, trace
@@ -19,22 +19,45 @@ def get_mcp_server_url() -> str:
 
 def _conversation_input(
     message: str,
-    history: list[dict[str, str]],
+    history: list[dict[str, str] | list[str] | tuple[str, str]],
 ) -> list[dict[str, object]]:
     input_items: list[dict[str, object]] = []
     for turn in history:
-        role = turn.get("role")
-        content = turn.get("content")
-        if role not in {"user", "assistant"} or not content:
+        if isinstance(turn, dict):
+            role = turn.get("role")
+            content = turn.get("content")
+            if role not in {"user", "assistant"} or not content:
+                continue
+
+            content_type = "input_text" if role == "user" else "output_text"
+            input_items.append(
+                {
+                    "role": role,
+                    "content": [{"type": content_type, "text": str(content)}],
+                }
+            )
             continue
 
-        content_type = "input_text" if role == "user" else "output_text"
-        input_items.append(
-            {
-                "role": role,
-                "content": [{"type": content_type, "text": str(content)}],
-            }
-        )
+        if len(turn) != 2:
+            continue
+
+        user_content, assistant_content = turn
+        if user_content:
+            input_items.append(
+                {
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": str(user_content)}],
+                }
+            )
+        if assistant_content:
+            input_items.append(
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "output_text", "text": str(assistant_content)}
+                    ],
+                }
+            )
 
     input_items.append(
         {
@@ -45,10 +68,14 @@ def _conversation_input(
     return input_items
 
 
-async def _run_agent(user_message: str, history: list[dict[str, str]]) -> str:
+async def _stream_agent(
+    user_message: str,
+    history: list[dict[str, str] | list[str] | tuple[str, str]],
+) -> AsyncIterator[str]:
+    server_url = get_mcp_server_url()
     async with MCPServerStreamableHttp(
         name="Meridian MCP Server",
-        params={"url": get_mcp_server_url()},
+        params={"url": server_url},
         cache_tools_list=True,
         max_retry_attempts=3,
     ) as server:
@@ -61,6 +88,7 @@ async def _run_agent(user_message: str, history: list[dict[str, str]]) -> str:
                 "and avoid making up an answer. You can nudge the user to ask "
                 "questions that the tools can answer."
             ),
+            model="gpt-4.1-mini",
             mcp_servers=[server],
             model_settings=ModelSettings(
                 tool_choice="required",
@@ -69,68 +97,56 @@ async def _run_agent(user_message: str, history: list[dict[str, str]]) -> str:
         with trace(
             "Meridian MCP Chatbot",
             metadata={
-                "mcp_server_url": get_mcp_server_url(),
+                "mcp_server_url": server_url,
                 "history_turns": str(len(history)),
                 "message_length": str(len(user_message)),
             },
         ):
-            result = await Runner.run(
+            result = Runner.run_streamed(
                 agent,
                 _conversation_input(user_message, history),
             )
+            streamed_text = ""
+            async for event in result.stream_events():
+                if event.type != "raw_response_event":
+                    continue
 
-    return str(result.final_output)
+                data = event.data
+                if data.type != "response.output_text.delta":
+                    continue
+
+                streamed_text += data.delta
+                yield streamed_text
+
+            final_output = str(result.final_output or "")
+            if final_output and final_output != streamed_text:
+                yield final_output
 
 
-def respond(
+# chat function that gradio will call, it will stream the response from the agent to the UI
+async def respond(
     message: str,
-    history: list[dict[str, str]],
-):
+    history: list[dict[str, str] | list[str] | tuple[str, str]],
+) -> AsyncIterator[str]:
     history = history or []
     if not message.strip():
-        return history, ""
+        yield ""
+        return
 
     try:
-        response = asyncio.run(_run_agent(message, history))
+        async for chunk in _stream_agent(message, history):
+            yield chunk
     except Exception as exc:
-        response = f"Agent request failed: {exc}"
-
-    history = history + [{"role": "user", "content": message}]
-    history.append({"role": "assistant", "content": response})
-    return history, ""
-
-
-def build_app() -> gr.Blocks:
-    with gr.Blocks(title="Meridian MCP Chatbot") as demo:
-        gr.Markdown("# Meridian MCP Chatbot")
-
-        with gr.Row():
-            with gr.Column():
-                chatbot = gr.Chatbot(height=520)
-                message = gr.Textbox(
-                    label="Message",
-                    placeholder="Ask something the MCP server can answer...",
-                    lines=2,
-                )
-                send = gr.Button("Send", variant="primary")
-
-        send.click(
-            respond,
-            inputs=[message, chatbot],
-            outputs=[chatbot, message],
-        )
-        message.submit(
-            respond,
-            inputs=[message, chatbot],
-            outputs=[chatbot, message],
-        )
-
-    return demo
+        yield f"Agent request failed: {exc}"
 
 
 def main() -> None:
     get_mcp_server_url()
-    build_app().launch()
+    gr.ChatInterface(
+        fn=respond,
+        title="Meridian MCP Chatbot",
+        autoscroll=True,
+    ).launch()
 
 
 if __name__ == "__main__":
