@@ -1,0 +1,15 @@
+[project]
+name = "meridian-chatbot"
+version = "0.1.0"
+description = "A Gradio chat interface that queries an MCP server."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "gradio>=5.0",
+    "mcp>=1.0",
+    "openai-agents>=0.14.8",
+    "python-dotenv>=1.2.2",
+]
+
+[project.scripts]
+meridian-chatbot = "app:main"
