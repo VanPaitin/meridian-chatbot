@@ -19,52 +19,19 @@ def get_mcp_server_url() -> str:
 
 def _conversation_input(
     message: str,
-    history: list[dict[str, str] | list[str] | tuple[str, str]],
+    history: list[dict[str, str]],
 ) -> list[dict[str, object]]:
     input_items: list[dict[str, object]] = []
     for turn in history:
-        if isinstance(turn, dict):
-            role = turn.get("role")
-            content = turn.get("content")
-            if role not in {"user", "assistant"} or not content:
-                continue
-
-            content_type = "input_text" if role == "user" else "output_text"
-            input_items.append(
-                {
-                    "role": role,
-                    "content": [{"type": content_type, "text": str(content)}],
-                }
-            )
+        role = turn.get("role")
+        content = turn.get("content")
+        if role not in {"user", "assistant"} or not content:
             continue
 
-        if len(turn) != 2:
-            continue
+        content = content[0]["text"] if isinstance(content, list) else str(content)
+        input_items.append({"role": role, "content": content})
 
-        user_content, assistant_content = turn
-        if user_content:
-            input_items.append(
-                {
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": str(user_content)}],
-                }
-            )
-        if assistant_content:
-            input_items.append(
-                {
-                    "role": "assistant",
-                    "content": [
-                        {"type": "output_text", "text": str(assistant_content)}
-                    ],
-                }
-            )
-
-    input_items.append(
-        {
-            "role": "user",
-            "content": [{"type": "input_text", "text": message}],
-        }
-    )
+    input_items.append({"role": "user", "content": message})
     return input_items
 
 
@@ -76,7 +43,8 @@ def build_agent(server: MCPServerStreamableHttp) -> Agent:
             "Prefer tool results over general knowledge. "
             "If the question is not answerable by the tools, say you don't know "
             "and avoid making up an answer. You can nudge the user to ask "
-            "questions that the tools can answer."
+            "questions that the tools can answer. "
+            "Please respond with only the answer, without any additional commentary or formatting."
         ),
         model="gpt-4.1-mini",
         mcp_servers=[server],
@@ -88,7 +56,7 @@ def build_agent(server: MCPServerStreamableHttp) -> Agent:
 
 async def _stream_agent(
     user_message: str,
-    history: list[dict[str, str] | list[str] | tuple[str, str]],
+    history: list[dict[str, str]],
 ) -> AsyncIterator[str]:
     server_url = get_mcp_server_url()
     async with MCPServerStreamableHttp(
@@ -123,7 +91,7 @@ async def _stream_agent(
                 streamed_text += data.delta
                 yield streamed_text
 
-            final_output = str(result.final_output or "")
+            final_output = result.final_output
             if final_output and final_output != streamed_text:
                 yield final_output
 
@@ -131,7 +99,7 @@ async def _stream_agent(
 # chat function that gradio will call, it will stream the response from the agent to the UI
 async def respond(
     message: str,
-    history: list[dict[str, str] | list[str] | tuple[str, str]],
+    history: list[dict[str, str]],
 ) -> AsyncIterator[str]:
     history = history or []
     if not message.strip():
